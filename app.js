@@ -1,11 +1,8 @@
-document.addEventListener('DOMContentLoaded', async () => {
-    // Tunggu hingga 'window.db' siap sebelum mengimpor fungsi Firestore
-    while (!window.db) {
-        await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    
-    const { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
-    
+import { auth, db } from './firebase-config.js';
+import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+function initializeApp() {
     // --- BAGIAN 1: SELEKSI ELEMEN DOM ---
     const navKesalahan = document.getElementById('nav-kesalahan');
     const navBoxNama = document.getElementById('nav-boxnama');
@@ -38,9 +35,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const closeErrorViewModalBtn = document.querySelector('#error-view-modal .modal-close');
 
     // --- KONEKSI KE FIREBASE COLLECTIONS ---
-    const errorsCollectionRef = collection(window.db, "kesalahan");
-    const staffCollectionRef = collection(window.db, "staff");
-    
+    const errorsCollectionRef = collection(db, "kesalahan");
+    const staffCollectionRef = collection(db, "staff");
+
     // --- FUNGSI-FUNGSI UTAMA ---
     function showPage(pageId) {
         [pageKesalahan, pageBoxNama, pageDataStaff, pageTambah].forEach(p => p.style.display = 'none');
@@ -56,24 +53,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         navToActivate.classList.add('active');
     }
 
+    function parseReportText(text) {
+        const findValue = key => (new RegExp(`^${key}\\s*:\\s*(.*)$`, "im")).exec(text);
+        return {
+            perihal: findValue("Perihal") ? findValue("Perihal")[1].trim() : "Tidak Ditemukan",
+            staff: findValue("Staff") ? findValue("Staff")[1].trim() : "Tidak Ditemukan",
+            full_text: text
+        };
+    }
+
     async function getStoredErrors() {
         const data = await getDocs(query(errorsCollectionRef, orderBy('createdAt', 'desc')));
         return data.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
     }
-    
+
     async function saveError(errorData) {
         await addDoc(errorsCollectionRef, { ...errorData, createdAt: serverTimestamp() });
     }
 
     async function deleteSingleError(errorId) {
-        const errorDoc = doc(window.db, "kesalahan", errorId);
+        const errorDoc = doc(db, "kesalahan", errorId);
         await deleteDoc(errorDoc);
     }
-    
+
     async function deleteAllErrors() {
         const errorsSnapshot = await getDocs(errorsCollectionRef);
-        for (const doc of errorsSnapshot.docs) {
-            await deleteDoc(doc.ref);
+        for (const docSnapshot of errorsSnapshot.docs) {
+            await deleteDoc(docSnapshot.ref);
         }
     }
 
@@ -83,7 +89,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const toDate = toDateEl.value ? new Date(toDateEl.value).setHours(23, 59, 59, 999) : null;
         const searchTerm = employeeSearchEl.value.toLowerCase();
         let filteredErrors = errors.filter(e => {
-            const errorTimestamp = e.createdAt?.toDate(); // Gunakan createdAt dari Firebase
+            const errorTimestamp = e.createdAt?.toDate();
             if (!errorTimestamp) return false;
             const dateMatch = (!fromDate || errorTimestamp >= fromDate) && (!toDate || errorTimestamp <= toDate);
             const employeeMatch = (searchTerm === "" || (e.staff && e.staff.toLowerCase().includes(searchTerm)));
@@ -111,9 +117,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <td>Staff</td>
                     <td>${err.perihal}</td>
                     <td>
-                        <div class="btn-action-group">
-                            <button class="btn-action view btn-view-error" data-id="${err.id}"><i class="bi bi-eye-fill"></i></button>
-                            <button class="btn-action delete btn-delete-error" data-id="${err.id}"><i class="bi bi-trash-fill"></i></button>
+                        <div class="button-wrapper" style="justify-content: center; margin: 0; gap: 10px;">
+                            <button class="btn btn-sm btn__view btn-view-error" data-id="${err.id}"><i class="bi bi-eye-fill"></i></button>
+                            <button class="btn btn-sm btn__danger btn-delete-error" data-id="${err.id}"><i class="bi bi-trash-fill"></i></button>
                         </div>
                     </td>
                 </tr>`;
@@ -149,23 +155,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             staffSummaryContainer.innerHTML += staffBoxHTML;
         });
     }
-
+    
     async function getStoredStaff() {
         const data = await getDocs(staffCollectionRef);
         return data.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
     }
-
+    
     async function saveStaff(staffData, staffId) {
         if (staffId) {
-            const staffDoc = doc(window.db, "staff", staffId);
+            const staffDoc = doc(db, "staff", staffId);
             await updateDoc(staffDoc, staffData);
         } else {
             await addDoc(staffCollectionRef, staffData);
         }
     }
-    
+
     async function deleteSingleStaff(staffId) {
-        const staffDoc = doc(window.db, "staff", staffId);
+        const staffDoc = doc(db, "staff", staffId);
         await deleteDoc(staffDoc);
     }
     
@@ -179,11 +185,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (staffList.length === 0) { staffTableBody.innerHTML = `<tr><td colspan="10" style="text-align:center; font-style:italic;">Belum ada data staff.</td></tr>`; return; }
         staffList.forEach((staff, index) => {
             let usia = ''; const calculatedAge = calculateAge(staff.tanggalLahir); if (calculatedAge !== null && calculatedAge >= 0) { usia = `${calculatedAge} TAHUN`; }
-            const row = `<tr><td>${index + 1}</td><td>${staff.namaStaff || ''}</td><td>${staff.noPassport || ''}</td><td>${staff.jabatan || ''}</td><td>${staff.tempatLahir || ''}</td><td>${staff.tanggalLahir || ''}</td><td>${usia}</td><td>${staff.emailKerja || ''}</td><td>${staff.adminIdn || ''}</td><td><div class="btn-action-group"><button class="btn-action view btn-view-staff" data-id="${staff.id}"><i class="bi bi-eye-fill"></i></button><button class="btn-action edit btn-edit" data-id="${staff.id}"><i class="bi bi-pencil-fill"></i></button><button class="btn-action delete btn-delete" data-id="${staff.id}"><i class="bi bi-trash-fill"></i></button></div></td></tr>`;
+            const row = `<tr><td>${index + 1}</td><td>${staff.namaStaff || ''}</td><td>${staff.noPassport || ''}</td><td>${staff.jabatan || ''}</td><td>${staff.tempatLahir || ''}</td><td>${staff.tanggalLahir || ''}</td><td>${usia}</td><td>${staff.emailKerja || ''}</td><td>${staff.adminIdn || ''}</td><td><div class="button-wrapper" style="justify-content: flex-start; margin: 0;"><button class="btn btn-sm btn__view btn-view-staff" data-id="${staff.id}"><i class="bi bi-eye-fill"></i></button><button class="btn btn-sm btn__info btn-edit" data-id="${staff.id}"><i class="bi bi-pencil-fill"></i></button><button class="btn btn-sm btn__danger btn-delete" data-id="${staff.id}"><i class="bi bi-trash-fill"></i></button></div></td></tr>`;
             staffTableBody.innerHTML += row;
         });
     }
-    
+
     function openViewModal(staff) { /* ... (Fungsi ini tetap sama) ... */ }
     
     async function exportToExcel() {
@@ -197,10 +203,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // --- BAGIAN 4: EVENT LISTENERS ---
-    navKesalahan.addEventListener('click', (e) => { e.preventDefault(); showPage('kesalahan'); });
-    navBoxNama.addEventListener('click', (e) => { e.preventDefault(); showPage('boxnama'); });
-    navDataStaff.addEventListener('click', (e) => { e.preventDefault(); showPage('datastaff'); });
-    navTambah.addEventListener('click', (e) => { e.preventDefault(); showPage('tambah'); });
+    [navKesalahan, navBoxNama, navDataStaff, navTambah].forEach(nav => nav.addEventListener('click', (e) => { e.preventDefault(); showPage(nav.id.split('-')[1]); }));
     
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -286,6 +289,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     exportExcelBtn.addEventListener('click', exportToExcel);
 
-    // --- BAGIAN 5: INISIALISASI APLIKASI ---
+    // --- INISIALISASI HALAMAN ---
+    document.getElementById('app-loader').style.display = 'none';
+    document.getElementById('app-content').style.display = 'block';
     showPage('kesalahan');
+}
+
+// --- PEMERIKSAAN AUTENTIKASI ---
+onAuthStateChanged(auth, (user) => {
+    if (user) {
+        initializeApp();
+        document.getElementById('logout-btn').addEventListener('click', (e) => {
+            e.preventDefault();
+            signOut(auth);
+        });
+    } else {
+        window.location.href = 'login.html';
+    }
 });
